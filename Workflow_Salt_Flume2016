@@ -1,0 +1,361 @@
+##For paired end data that has already been demultiplexed, see https://docs.qiime2.org/2017.12/tutorials/fmt/
+##and
+https://docs.qiime2.org/2017.12/tutorials/atacama-soils/
+
+##QIIME2 Workflow
+
+# To activate this environment, use:
+# source activate qiime2-2017.12
+#
+# To deactivate an active environment, use:
+# source deactivate
+#
+
+#test installation
+# qiime --help
+
+#Make directory or project
+mkdir /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016
+cd /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016
+
+### NEED TO REMOVE PCR PRIMERS PRIOR TO ANALYSIS
+### PRIMERS FROM TURNER ET AL., 1999
+### 16S 357F - 5'-CTCCTACGGGAGGCAGCAG-3'
+### 16S 1391R - 5'-GACGGGCGGTGTGTRCA-3'
+### PRIMERS NOT FOUND? WEIRD.
+
+###################DEMULTIPLEX IF NECESSARY#############################
+###Demultiplex if necessary
+#OR
+### Import demultiplexed data as paired end files
+###Determine which ASCII code is used for PHRED scores
+https://en.wikipedia.org/wiki/FASTQ_format#Illumina_sequence_identifiers
+https://docs.qiime2.org/2017.12/tutorials/importing/
+
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/Salt_Flume_fastq_manifest.csv \
+  --output-path paired-end-demux.qza \
+  --source-format PairedEndFastqManifestPhred33
+   
+###Create a visualisation for the purpose of examining sequence quality
+qiime demux summarize \
+  --i-data paired-end-demux.qza \
+  --o-visualization paired-end-demux.qzv
+
+###View
+qiime tools view paired-end-demux.qzv
+
+
+######################EXAMINE SEQUENCE QUALITY AND TRIM IF NECESSARY#################
+###Truncate to 233 bp as this appears to be a point where quality median quality scores fall below 30
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs paired-end-demux.qza \
+  --o-table table_trunc233 \
+  --o-representative-sequences rep-seqs_trunc233 \
+  --p-trim-left-f 5 \
+  --p-trim-left-r 5 \
+  --p-trunc-len-f 233 \
+  --p-trunc-len-r 233
+
+###Generate summaries of what has been done thus far
+qiime feature-table summarize \
+  --i-table table_trunc233.qza \
+  --o-visualization table_trunc233.qzv \
+  --m-sample-metadata-file Salt_Flume_sample_metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs_trunc233.qza \
+  --o-visualization rep-seqs_trunc233.qzv
+
+###View summaries
+qiime tools view table_trunc233.qzv
+qiime tools view rep-seqs_trunc233.qzv
+
+######################CHIMERA CHECKING#########################################
+###Chimera checking--De novo
+### https://forum.qiime2.org/t/identifying-and-filtering-chimeric-feature-sequences-with-vsearch/2252
+
+
+qiime vsearch uchime-denovo \
+	--i-table table_trunc233.qza \
+	--i-sequences rep-seqs_trunc233.qza \
+	--output-dir uchime-dn-out_trunc233
+
+###Generate chimera checking summary visualization
+qiime metadata tabulate \
+	--m-input-file uchime-dn-out_trunc233/stats.qza \
+	--o-visualization uchime-dn-out_trunc233/stats_trunc233.qzv
+
+qiime tools view uchime-dn-out_trunc233/stats_trunc233.qzv
+
+#Write chimera detection results to filename using a 18-field, tab-separated uchime-like format. Use --uchimeout5 to use a format compatible with usearch v5 and earlier versions. Rows output order may vary when using multiple threads. https://github.com/torognes/vsearch
+#1. score: higher score means a more likely chimeric alignment.
+#2. Q: query sequence label.
+#3. A: parent A sequence label.
+#4. B: parent B sequence label.
+#5. T: top parent sequence label (i.e. parent most similar to the query). That field is removed when using --uchimeout5.
+#6. idQM: percentage of similarity of query (Q) and model (M) constructed as a part of parent A and a part of parent B.
+#7. idQA: percentage of similarity of query (Q) and parent A.
+#8. idQB: percentage of similarity of query (Q) and parent B.
+#9. idAB: percentage of similarity of parent A and parent B.
+#10. idQT: percentage of similarity of query (Q) and top parent (T).
+#11. LY: yes votes in the left part of the model.
+#12. LN: no votes in the left part of the model.
+#13. LA: abstain votes in the left part of the model.
+#14. RY: yes votes in the right part of the model.
+#15. RN: no votes in the right part of the model.
+#16. RA: abstain votes in the right part of the model.
+#17. div: divergence, defined as (idQM - idQT).
+#18. YN: query is chimeric (Y), or not (N), or is a borderline case (?).
+
+
+###Filter input table and sequences, excluding chimeras and “borderline chimeras”
+qiime feature-table filter-features \
+	--m-metadata-file uchime-dn-out_trunc233/nonchimeras.qza \
+	--i-table table_trunc233.qza \
+	--o-filtered-table table-nonchimeric_trunc233.qza
+qiime feature-table filter-seqs \
+	--i-data rep-seqs_trunc233.qza \
+	--m-metadata-file uchime-dn-out_trunc233/nonchimeras.qza \
+	--o-filtered-data rep-seqs-nonchimeric_trunc233.qza
+qiime feature-table summarize \
+	--i-table table-nonchimeric_trunc233.qza \
+	--o-visualization table-nonchimeric_trunc233.qzv
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs-nonchimeric_trunc233.qza \
+  --o-visualization rep-seqs-nonchimeric_trunc233.qzv
+
+########
+########
+#######Filter input table and sequences, excluding chimeras but retaining “borderline chimeras”
+###qiime feature-table filter-features \
+	--m-metadata-file uchime-dn-out/chimeras_trunc233.qza \
+	--i-table table_trunc233.qza \
+	--o-filtered-table uchime-dn-out/table-nonchimeric_trunc233.qza \
+	--p-exclude-ids
+###qiime feature-table filter-seqs \
+	--i-data rep-seqs.qza \
+	--m-metadata-file uchime-dn-out/chimeras.qza \
+	--o-filtered-data uchime-dn-out/rep-seqs-nonchimeric.qza \
+	--p-exclude-ids
+###qiime feature-table summarize \
+	--i-table uchime-dn-out/table-nonchimeric.qza \
+	--o-visualization uchime-dn-out/table-nonchimeric.qzv
+###
+###Chimera checking--Reference base also available: qiime vsearch uchime_ref
+########
+########
+
+###Visualize summary post-chimera removal
+qiime tools view table-nonchimeric_trunc233.qzv
+qiime tools view rep-seqs-nonchimeric_trunc233.qzv
+
+
+#############################CHOOSE A SAMPLING DEPTH###########################
+###Choose a sampling depth based off of sequence count.
+###Min 15, 25% 3431, median 4663, 75% 8547; mean 6040
+### 2100; retain 125 samples
+#############################RAREFY TO SAMPLING DEPTH###########################
+###Rarefy to desired sampling depth
+###In this case, 2803
+### Retains 115 sequences and 40.12% of the sequences
+### Lose: 2C_3_3, 1M_4_3, 1C_3_7, 2M_2_5, 1H_4_3, 1C_4_5, 2C_2_1, 2C_4_5, 2M_2_9, 1H_2_3, 1M_4_7, 2C_3_5, 3M_4_5, 2M_4_3, 2H_3_5, 1H_4_7, 2C_3_9, 2C_2_9
+#############################FILTER READS BY QUANTITY###########################
+### Filter by number of times a sequence appears in all samples
+### 2803
+qiime feature-table filter-features \
+  --i-table table_trunc233.qza \
+  --p-min-samples 2 \
+  --p-min-frequency 2803 \
+  --o-filtered-table sample-contingency-filtered-table_trunc233.qza
+	
+#  --p-min-features 10 \
+
+#############################CREATE A TREE###########################
+### Create a tree for phylogenetic analysis
+# First, we perform a multiple sequence alignment of the sequences
+qiime alignment mafft \
+  --i-sequences rep-seqs-nonchimeric_trunc233.qza \
+  --o-alignment aligned-rep-seqs-nonchimeric_trunc233.qza
+  
+# Next, we mask (or filter) the alignment to remove positions that are highly variable. These positions are generally considered to add noise to a resulting phylogenetic tree.
+qiime alignment mask \
+  --i-alignment aligned-rep-seqs-nonchimeric_trunc233.qza \
+  --o-masked-alignment masked-aligned-rep-seqs-nonchimeric_trunc233.qza
+  
+# Apply FastTree to generate a phylogenetic tree from the masked alignment.
+qiime phylogeny fasttree \
+  --i-alignment masked-aligned-rep-seqs-nonchimeric_trunc233.qza \
+  --o-tree unrooted-tree-masked-aligned-rep-seqs-nonchimeric_trunc233.qza
+
+#The FastTree program creates an unrooted tree, so in the final step in this section we apply midpoint rooting to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
+
+qiime phylogeny midpoint-root \
+  --i-tree unrooted-tree-masked-aligned-rep-seqs-nonchimeric_trunc233.qza \
+  --o-rooted-tree rooted-tree-masked-aligned-rep-seqs-nonchimeric_trunc233.qza
+
+
+#############################ALPHA AND BETA DIVERSITY###########################
+
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny rooted-tree-masked-aligned-rep-seqs-nonchimeric_trunc233.qza \
+  --i-table table-nonchimeric_trunc233.qza \
+  --p-sampling-depth 2100 \
+  --m-metadata-file /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/Salt_Flume_sample_metadata.txt \
+  --output-dir core-metrics-results-nonchimeric_trunc233
+#Output artifacts:
+    #core-metrics-results-nonchimeric_trunc233/bray_curtis_distance_matrix.qza
+    #core-metrics-results-nonchimeric_trunc233/bray_curtis_pcoa_results.qza
+    #core-metrics-results-nonchimeric_trunc233/evenness_vector.qza
+    #core-metrics-results-nonchimeric_trunc233/faith_pd_vector.qza
+    #core-metrics-results-nonchimeric_trunc233/jaccard_distance_matrix.qza
+    #core-metrics-results-nonchimeric_trunc233/jaccard_pcoa_results.qza
+    #core-metrics-results-nonchimeric_trunc233/observed_otus_vector.qza
+    #core-metrics-results-nonchimeric_trunc233/rarefied_table.qza
+    #core-metrics-results-nonchimeric_trunc233/shannon_vector.qza
+    #core-metrics-results-nonchimeric_trunc233/unweighted_unifrac_distance_matrix.qza
+    #core-metrics-results-nonchimeric_trunc233/unweighted_unifrac_pcoa_results.qza
+    #core-metrics-results-nonchimeric_trunc233/weighted_unifrac_distance_matrix.qza
+    #core-metrics-results-nonchimeric_trunc233/weighted_unifrac_pcoa_results.qza
+#Output visualizations:
+    #core-metrics-results-nonchimeric_trunc233/bray_curtis_emperor.qzv
+    #core-metrics-results-nonchimeric_trunc233/jaccard_emperor.qzv
+    #core-metrics-results-nonchimeric_trunc233/unweighted_unifrac_emperor.qzv
+    #core-metrics-results-nonchimeric_trunc233/weighted_unifrac_emperor.qzv
+
+###View ordinations
+qiime tools view core-metrics-results-nonchimeric_trunc233/bray_curtis_emperor.qzv
+qiime tools view core-metrics-results-nonchimeric_trunc233/jaccard_emperor.qzv
+qiime tools view core-metrics-results-nonchimeric_trunc233/weighted_unifrac_emperor.qzv
+qiime tools view core-metrics-results-nonchimeric_trunc233/unweighted_unifrac_emperor.qzv
+
+###Examine one of the alpha diversity metrics; can be done for evenness_vector.qza, shannon_vector.qza, faith_pd_vector.qza,
+qiime diversity alpha-group-significance \
+  --i-alpha-diversity core-metrics-results-nonchimeric_trunc233/faith_pd_vector.qza \
+  --m-metadata-file /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/Salt_Flume_sample_metadata.txt \
+  --o-visualization core-metrics-results-nonchimeric_trunc233/faith-pd-group-significance.qzv
+
+qiime tools view core-metrics-results-nonchimeric_trunc233/faith-pd-group-significance.qzv
+
+###MORE TO DO HERE
+
+
+#########################TAXONOMIC ANALYSIS################
+### Obtain reference data sets for 16S or 18S.
+### Files will vary depending on desired resolution
+
+mkdir training-feature-classifiers_99_otus
+cd training-feature-classifiers_99_otus
+
+######importing reference data sets
+###Be sure to import unaligned sequences from GG!!!
+qiime tools import \
+  --type 'FeatureData[Sequence]' \
+  --input-path /Users/JVG/QIIME2_Analyses/gg_13_8_otus/rep_set/99_otus.fasta \
+  --output-path 99_otus.qza
+
+qiime tools import \
+  --type 'FeatureData[Taxonomy]' \
+  --source-format HeaderlessTSVTaxonomyFormat \
+  --input-path /Users/JVG/QIIME2_Analyses/gg_13_8_otus/taxonomy/99_otu_taxonomy.txt \
+  --output-path ref-taxonomy_99_otus.qza
+  
+######Extract reference reads  
+  qiime feature-classifier extract-reads \
+  --i-sequences 99_otus.qza \
+  --p-f-primer GAGTGCCAGCMGCCGCGGTAA \
+  --p-r-primer ACGGACTACHVGGGTWTCTAAT \
+  --p-trunc-len 233 \
+  --o-reads ref-seqs_99_otus_trunc233.qza
+  
+  
+######Train the classifier
+qiime feature-classifier fit-classifier-naive-bayes \
+  --i-reference-reads ref-seqs_99_otus_trunc233.qza \
+  --i-reference-taxonomy ref-taxonomy_99_otus.qza \
+  --o-classifier classifier_99_otus_trunc233.qza
+
+
+######Test the classifier
+qiime feature-classifier classify-sklearn \
+  --i-classifier classifier_99_otus_trunc233.qza \
+  --i-reads /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/rep-seqs-nonchimeric_trunc233.qza \
+  --o-classification taxonomy_99_otus_trunc233.qza
+
+qiime metadata tabulate \
+  --m-input-file taxonomy_99_otus_trunc233.qza \
+  --o-visualization taxonomy_99_otus_trunc233.qzv
+
+###Visualize
+qiime taxa barplot \
+  --i-table /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/table-nonchimeric_trunc233.qza \
+  --i-taxonomy taxonomy_99_otus_trunc233.qza \
+  --o-visualization taxa-bar-plots_99_otus_trunc233.qzv
+
+#--m-metadata-file /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/Salt_Flume_sample_metadata.txt \
+
+qiime tools view taxa-bar-plots_99_otus_trunc233.qzv
+
+
+###Filter out chloroplast and mitochondrial sequences
+qiime taxa filter-table \
+  --i-table /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/table-nonchimeric_trunc233.qza \
+  --i-taxonomy taxonomy_99_otus_trunc233.qza \
+  --p-include k__ \
+  --p-exclude mitochondria,chloroplast \
+  --o-filtered-table table-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233.qza
+
+### Visualize again
+qiime taxa barplot \
+  --i-table table-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233.qza \
+  --i-taxonomy taxonomy_99_otus_trunc233.qza \
+  --m-metadata-file /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/Salt_Flume_sample_metadata.txt \
+  --o-visualization taxa-bar-plots-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233_99_otus.qzv
+
+qiime tools view taxa-bar-plots-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233_99_otus.qzv
+
+
+
+#### Exporting Data and Trees
+
+
+mkdir exported-feature-table
+qiime tools export \
+  table-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233.qza \
+  --output-dir exported-feature-table
+
+### Extract data with provenance
+mkdir extracted-feature-table
+qiime tools extract \
+  table-with-phyla-no-mitochondria-no-chloroplast_99_otus_trunc233.qza \
+  --output-dir extracted-feature-table
+
+### Extract tree 
+mkdir extracted-unrooted-tree
+qiime tools extract /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/unrooted-tree-masked-aligned-rep-seqs-nonchimeric_trunc233.qza \
+  --output-dir extracted-unrooted-tree
+
+cd /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016
+mkdir OTUs_99
+
+### make biom table a .tsv
+biom convert -i /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/training-feature-classifiers_99_otus/extracted-feature-table/8fa65fae-d8a4-4556-a972-05fd7a8af6e2/data/feature-table.biom -o OTUs_99/feature-table.tsv --to-tsv
+### Collect taxonomy file
+qiime tools export /Users/JVG/Google_Drive/Research/FLUME/Bioinformatic_Analysis_Salt_Flume_2016/qiime2-SALT-FLUME-2016/training-feature-classifiers_99_otus/taxonomy_99_otus_trunc233.qza --output-dir OTUs_99
+
+###Open in Excel and save as .xlsx file for editing
+### Use the following Excel function in the taxonomy Excel file to edit out Chloroplast sequences
+### =IF(ISNUMBER(SEARCH("Chloroplast",B2)),"GETRIDOFME","OK")
+
+=IF(ISNUMBER(SEARCH("C",B1)),"CON",IF(ISNUMBER(SEARCH("H",B1),"HIGH",IF(ISNUMBER(SEARCH("M",B1),"MID","XXXXXXX")))))
+
+## Samples containing less than 10 unique OTUs were removed
+## 2C_2_9, 2C_3_9, 1H_4_7, 2M_4_3, 2H_3_5, 2M_2_9
+
+## Carry on analysis with 
+# /Users/JVG/Google_Drive/Research/FLUME/R/Flume_Cl_2016/Flume_Data.R
+
+
+
+
